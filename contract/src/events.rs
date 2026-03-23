@@ -61,18 +61,3 @@ pub fn emit_fees_withdrawn(env: &Env, amount: u64, to: Address) {
     env.events()
         .publish((symbol_short!("fees_out"),), (amount, to));
 }
-
-pub fn emit_batch_trades_created(env: &Env, count: u32, total_amount: u64) {
-    env.events()
-        .publish((symbol_short!("batch_cr"),), (count, total_amount));
-}
-
-pub fn emit_batch_trades_funded(env: &Env, count: u32, total_amount: u64) {
-    env.events()
-        .publish((symbol_short!("batch_fd"),), (count, total_amount));
-}
-
-pub fn emit_batch_trades_confirmed(env: &Env, count: u32, total_payout: u64, total_fees: u64) {
-    env.events()
-        .publish((symbol_short!("batch_cn"),), (count, total_payout, total_fees));
-}
