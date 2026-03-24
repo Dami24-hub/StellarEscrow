@@ -11,6 +11,7 @@ const TRADE_COUNTER: &str = "COUNTER";
 const ACCUMULATED_FEES: &str = "ACC_FEES";
 const TRADE_PREFIX: &str = "TRADE";
 const ARBITRATOR_PREFIX: &str = "ARB";
+const PAUSED: &str = "PAUSED";
 const TIER_CONFIG: &str = "TIER_CFG";
 const USER_TIER_PREFIX: &str = "UTIER";
 const TEMPLATE_COUNTER: &str = "TMPL_CTR";
@@ -126,6 +127,16 @@ pub fn has_arbitrator(env: &Env, arbitrator: &Address) -> bool {
     env.storage().persistent().has(&key)
 }
 
+// ---------------------------------------------------------------------------
+// Pause state
+// ---------------------------------------------------------------------------
+
+pub fn set_paused(env: &Env, paused: bool) {
+    env.storage().instance().set(&PAUSED, &paused);
+}
+
+pub fn is_paused(env: &Env) -> bool {
+    env.storage().instance().get(&PAUSED).unwrap_or(false)
 // Tier config
 pub fn save_tier_config(env: &Env, config: &TierConfig) {
     env.storage().instance().set(&TIER_CONFIG, config);

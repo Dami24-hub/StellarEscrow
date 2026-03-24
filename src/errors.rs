@@ -17,6 +17,7 @@ pub enum ContractError {
     ContractPaused = 11,
     BatchLimitExceeded = 11,
     EmptyBatch = 12,
+    ContractPaused = 13,
     MetadataTooManyEntries = 13,
     MetadataValueTooLong = 14,
     InvalidTierConfig = 15,

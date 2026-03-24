@@ -12,6 +12,7 @@ const ACCUMULATED_FEES: &str = "ACC_FEES";
 const TRADE_PREFIX: &str = "TRADE";
 const ARBITRATOR_PREFIX: &str = "ARB";
 const ADDR_TRADES_PREFIX: &str = "ADDR_T";
+const PAUSED: &str = "PAUSED";
 const TIER_CONFIG: &str = "TIER_CFG";
 const USER_TIER_PREFIX: &str = "UTIER";
 const TEMPLATE_COUNTER: &str = "TMPL_CTR";
@@ -123,6 +124,9 @@ pub fn get_trade_ids_for_address(env: &Env, address: &Address) -> Vec<u64> {
 }
 
 // ---------------------------------------------------------------------------
+// Pause state
+// ---------------------------------------------------------------------------
+
 // Tier config storage
 // ---------------------------------------------------------------------------
 
