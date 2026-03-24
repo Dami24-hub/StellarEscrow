@@ -26,4 +26,5 @@ pub enum ContractError {
     TemplateNameTooLong = 20,
     TemplateVersionLimitExceeded = 21,
     TemplateAmountMismatch = 22,
+    InvalidLedgerRange = 23,
 }

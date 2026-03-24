@@ -2,6 +2,7 @@ use soroban_sdk::{Address, Env, Vec};
 
 use crate::errors::ContractError;
 use crate::types::{
+    PlatformAnalytics, TierConfig, TimelineEntry, Trade, TradeTemplate,
     OnboardingProgress, PlatformAnalytics, TierConfig, TimelineEntry, Trade, TradeTemplate,
     UserAnalytics, UserPreference, UserProfile, UserTierInfo,
 };

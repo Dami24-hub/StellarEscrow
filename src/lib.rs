@@ -1,6 +1,7 @@
 #![no_std]
 
 mod admin;
+mod analytics;
 mod errors;
 mod events;
 mod history;
@@ -28,6 +29,12 @@ pub use theme::{
     THEME_DARK, THEME_LIGHT, THEME_SYSTEM,
 };
 pub use types::{
+    AnalyticsFilter, ChartPoint, DisputeResolution, FeeChartData, HistoryFilter, HistoryPage,
+    MetadataEntry, PlatformAnalytics, SortOrder, StatusDistribution, SuccessRateData,
+    SystemConfig, TierConfig, Trade, TradeDetail, TradeMetadata, TradeStatus, TradeTemplate,
+    TemplateTerms, TemplateVersion, TransactionRecord, UserAnalytics, UserProfile,
+    UserPreference, UserStatsSnapshot, UserTier, UserTierInfo, VerificationStatus,
+    VolumeChartData,
     DisputeResolution, HistoryFilter, HistoryPage, MetadataEntry, OnboardingProgress,
     OnboardingStep, PlatformAnalytics, SortOrder, StepStatus, SystemConfig, TierConfig, Trade,
     TradeAction, TradeDetail, TradeMetadata, TradeStatus, TradeTemplate, TemplateTerms,
@@ -46,6 +53,9 @@ use storage::{
     set_trade_counter, set_usdc_token,
 };
 
+use types::TimelineEntry;
+
+/// Return ContractPaused if the contract is currently paused.
 fn require_not_paused(env: &Env) -> Result<(), ContractError> {
     if is_paused(env) {
         return Err(ContractError::ContractPaused);
@@ -179,6 +189,8 @@ impl StellarEscrowContract {
         let trade_id = increment_trade_counter(&env)?;
         let base_fee_bps = get_fee_bps(&env)?;
         let fee_bps = tiers::effective_fee_bps(&env, &seller, base_fee_bps);
+        let fee = amount
+            .checked_mul(fee_bps as u64).ok_or(ContractError::Overflow)?
         let fee = amount.checked_mul(fee_bps as u64).ok_or(ContractError::Overflow)?
             .checked_div(10000).ok_or(ContractError::Overflow)?;
         let now = env.ledger().sequence();
@@ -239,6 +251,8 @@ impl StellarEscrowContract {
         let payout = trade.amount.checked_sub(trade.fee).ok_or(ContractError::Overflow)?;
         token_client.transfer(&env.current_contract_address(), &trade.seller, &(payout as i128));
         let current_fees = get_accumulated_fees(&env)?;
+        let new_fees = current_fees.checked_add(trade.fee).ok_or(ContractError::Overflow)?;
+        set_accumulated_fees(&env, new_fees);
         set_accumulated_fees(&env, current_fees.checked_add(trade.fee).ok_or(ContractError::Overflow)?);
         tiers::record_volume(&env, &trade.seller, trade.amount)?;
         tiers::record_volume(&env, &trade.buyer, trade.amount)?;
@@ -268,6 +282,7 @@ impl StellarEscrowContract {
         Ok(())
     }
 
+    /// Resolve a dispute (arbitrator only)
     pub fn resolve_dispute(env: Env, trade_id: u64, resolution: DisputeResolution) -> Result<(), ContractError> {
         if !is_initialized(&env) { return Err(ContractError::NotInitialized); }
         require_not_paused(&env)?;
@@ -305,10 +320,24 @@ impl StellarEscrowContract {
         Ok(())
     }
 
+    // -------------------------------------------------------------------------
+    // Query functions
+    // -------------------------------------------------------------------------
+
     pub fn get_trade(env: Env, trade_id: u64) -> Result<Trade, ContractError> {
         get_trade(&env, trade_id)
     }
 
+    pub fn get_accumulated_fees(env: Env) -> Result<u64, ContractError> {
+        get_accumulated_fees(&env)
+    }
+
+    pub fn is_arbitrator_registered(env: Env, arbitrator: Address) -> bool {
+        has_arbitrator(&env, &arbitrator)
+    }
+
+    pub fn get_platform_fee_bps(env: Env) -> Result<u32, ContractError> {
+        get_fee_bps(&env)
     pub fn update_trade_metadata(env: Env, trade_id: u64, metadata: Option<TradeMetadata>) -> Result<(), ContractError> {
         if !is_initialized(&env) { return Err(ContractError::NotInitialized); }
         let mut trade = get_trade(&env, trade_id)?;
@@ -366,6 +395,31 @@ impl StellarEscrowContract {
         Ok(())
     }
 
+    pub fn is_paused(env: Env) -> bool {
+        is_paused(&env)
+    }
+
+    // -------------------------------------------------------------------------
+    // Metadata
+    // -------------------------------------------------------------------------
+
+    pub fn update_trade_metadata(env: Env, trade_id: u64, metadata: Option<TradeMetadata>) -> Result<(), ContractError> {
+        if !is_initialized(&env) { return Err(ContractError::NotInitialized); }
+        let mut trade = get_trade(&env, trade_id)?;
+        trade.seller.require_auth();
+        if let Some(ref meta) = metadata { validate_metadata(meta)?; }
+        trade.metadata = metadata;
+        trade.updated_at = env.ledger().sequence();
+        save_trade(&env, trade_id, &trade);
+        events::emit_metadata_updated(&env, trade_id);
+        Ok(())
+    }
+
+    pub fn get_trade_metadata(env: Env, trade_id: u64) -> Result<Option<TradeMetadata>, ContractError> {
+        let trade = get_trade(&env, trade_id)?;
+        Ok(trade.metadata)
+    }
+
     // -------------------------------------------------------------------------
     // Batch operations
     // -------------------------------------------------------------------------
@@ -391,6 +445,20 @@ impl StellarEscrowContract {
                 if !has_arbitrator(&env, arb) { return Err(ContractError::ArbitratorNotRegistered); }
             }
             let trade_id = increment_trade_counter(&env)?;
+            let fee = amount
+                .checked_mul(fee_bps as u64).ok_or(ContractError::Overflow)?
+                .checked_div(10000).ok_or(ContractError::Overflow)?;
+            let trade = Trade {
+                id: trade_id,
+                seller: seller.clone(),
+                buyer: buyer.clone(),
+                amount,
+                fee,
+                arbitrator,
+                status: TradeStatus::Created,
+                created_at: now,
+                updated_at: now,
+                metadata: None,
             let fee = amount.checked_mul(fee_bps as u64).ok_or(ContractError::Overflow)?
                 .checked_div(10000).ok_or(ContractError::Overflow)?;
             let trade = Trade {
@@ -408,6 +476,11 @@ impl StellarEscrowContract {
         Ok(trade_ids)
     }
 
+    pub fn batch_fund_trades(
+        env: Env,
+        buyer: Address,
+        trade_ids: soroban_sdk::Vec<u64>,
+    ) -> Result<(), ContractError> {
     pub fn batch_fund_trades(env: Env, buyer: Address, trade_ids: soroban_sdk::Vec<u64>) -> Result<(), ContractError> {
         if !is_initialized(&env) { return Err(ContractError::NotInitialized); }
         require_not_paused(&env)?;
@@ -435,6 +508,11 @@ impl StellarEscrowContract {
         Ok(())
     }
 
+    pub fn batch_confirm_trades(
+        env: Env,
+        buyer: Address,
+        trade_ids: soroban_sdk::Vec<u64>,
+    ) -> Result<(), ContractError> {
     pub fn batch_confirm_trades(env: Env, buyer: Address, trade_ids: soroban_sdk::Vec<u64>) -> Result<(), ContractError> {
         if !is_initialized(&env) { return Err(ContractError::NotInitialized); }
         require_not_paused(&env)?;
@@ -545,6 +623,8 @@ impl StellarEscrowContract {
         let trade_id = increment_trade_counter(&env)?;
         let base_fee_bps = get_fee_bps(&env)?;
         let fee_bps = tiers::effective_fee_bps(&env, &seller, base_fee_bps);
+        let fee = amount
+            .checked_mul(fee_bps as u64).ok_or(ContractError::Overflow)?
         let fee = amount.checked_mul(fee_bps as u64).ok_or(ContractError::Overflow)?
             .checked_div(10000).ok_or(ContractError::Overflow)?;
         let now = env.ledger().sequence();
@@ -664,6 +744,8 @@ impl StellarEscrowContract {
         Ok(admin::get_analytics(&env))
     }
 
+    }
+
     /// Get full dashboard snapshot: platform stats, success rate, dispute rate, avg volume.
     pub fn get_dashboard(env: Env) -> Result<DashboardStats, ContractError> {
         if !is_initialized(&env) {
@@ -706,6 +788,54 @@ impl StellarEscrowContract {
     }
 
     // -------------------------------------------------------------------------
+    // Analytics Charts & Graphs
+    // -------------------------------------------------------------------------
+
+    /// Get trade volume chart data bucketed by ledger range.
+    pub fn get_volume_chart(env: Env, filter: AnalyticsFilter) -> Result<VolumeChartData, ContractError> {
+        analytics::get_volume_chart(&env, filter)
+    }
+
+    /// Get platform-wide trade success rate.
+    pub fn get_success_rate(env: Env) -> SuccessRateData {
+        analytics::get_success_rate(&env)
+    }
+
+    /// Get trade status distribution breakdown.
+    pub fn get_status_distribution(env: Env, filter: AnalyticsFilter) -> Result<StatusDistribution, ContractError> {
+        analytics::get_status_distribution(&env, filter)
+    }
+
+    /// Get fee collection chart data bucketed by ledger range.
+    pub fn get_fee_chart(env: Env, filter: AnalyticsFilter) -> Result<FeeChartData, ContractError> {
+        analytics::get_fee_chart(&env, filter)
+    }
+
+    /// Get aggregated stats snapshot for a single user.
+    pub fn get_user_stats(env: Env, address: Address) -> UserStatsSnapshot {
+        analytics::get_user_stats(&env, &address)
+    }
+
+    /// Get per-user volume chart from their trade history.
+    pub fn get_user_volume_chart(env: Env, address: Address, filter: AnalyticsFilter) -> Result<VolumeChartData, ContractError> {
+        analytics::get_user_volume_chart(&env, &address, filter)
+    }
+
+    /// Export platform analytics as CSV (no PII).
+    pub fn export_platform_analytics_csv(env: Env) -> soroban_sdk::String {
+        analytics::export_platform_csv(&env)
+    }
+
+    /// Export volume chart data as CSV (no PII).
+    pub fn export_volume_chart_csv(env: Env, filter: AnalyticsFilter) -> Result<soroban_sdk::String, ContractError> {
+        let data = analytics::get_volume_chart(&env, filter)?;
+        Ok(analytics::export_volume_csv(&env, &data))
+    }
+
+    /// Export user stats as CSV (no PII).
+    pub fn export_user_stats_csv(env: Env, address: Address) -> soroban_sdk::String {
+        let snapshot = analytics::get_user_stats(&env, &address);
+        analytics::export_user_stats_csv(&env, &snapshot)
     // Onboarding Flow
     // -------------------------------------------------------------------------
 
