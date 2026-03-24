@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Env};
 
 use crate::errors::ContractError;
-use crate::types::{TierConfig, Trade, TradeTemplate, UserTierInfo};
+use crate::types::{TierConfig, Trade, TradeTemplate, UserTierInfo, Subscription};
 
 const INITIALIZED: &str = "INIT";
 const ADMIN: &str = "ADMIN";
@@ -16,6 +16,7 @@ const TIER_CONFIG: &str = "TIER_CFG";
 const USER_TIER_PREFIX: &str = "UTIER";
 const TEMPLATE_COUNTER: &str = "TMPL_CTR";
 const TEMPLATE_PREFIX: &str = "TMPL";
+const SUBSCRIPTION_PREFIX: &str = "SUB";
 
 // Initialization
 pub fn is_initialized(env: &Env) -> bool {
@@ -137,6 +138,8 @@ pub fn set_paused(env: &Env, paused: bool) {
 
 pub fn is_paused(env: &Env) -> bool {
     env.storage().instance().get(&PAUSED).unwrap_or(false)
+}
+
 // Tier config
 pub fn save_tier_config(env: &Env, config: &TierConfig) {
     env.storage().instance().set(&TIER_CONFIG, config);
@@ -181,4 +184,20 @@ pub fn get_template(env: &Env, template_id: u64) -> Result<TradeTemplate, crate:
         .persistent()
         .get(&key)
         .ok_or(crate::errors::ContractError::TemplateNotFound)
+}
+
+// Subscriptions
+pub fn save_subscription(env: &Env, subscriber: &Address, sub: &Subscription) {
+    let key = (SUBSCRIPTION_PREFIX, subscriber);
+    env.storage().persistent().set(&key, sub);
+}
+
+pub fn get_subscription(env: &Env, subscriber: &Address) -> Option<Subscription> {
+    let key = (SUBSCRIPTION_PREFIX, subscriber);
+    env.storage().persistent().get(&key)
+}
+
+pub fn remove_subscription(env: &Env, subscriber: &Address) {
+    let key = (SUBSCRIPTION_PREFIX, subscriber);
+    env.storage().persistent().remove(&key);
 }

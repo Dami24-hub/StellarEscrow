@@ -73,6 +73,8 @@ pub fn emit_unpaused(env: &Env, admin: Address) {
 pub fn emit_emergency_withdraw(env: &Env, to: Address, amount: u64) {
     env.events()
         .publish((symbol_short!("emrg_wd"),), (to, amount));
+}
+
 pub fn emit_metadata_updated(env: &Env, trade_id: u64) {
     env.events()
         .publish((symbol_short!("meta_upd"),), trade_id);
@@ -113,7 +115,22 @@ pub fn emit_template_deactivated(env: &Env, template_id: u64) {
         .publish((symbol_short!("tmpl_off"),), template_id);
 }
 
-pub fn emit_trade_from_template(env: &Env, trade_id: u64, template_id: u64, version: u32) {
+pub fn emit_template_trade(env: &Env, trade_id: u64, template_id: u64, version: u32) {
     env.events()
         .publish((symbol_short!("tmpl_tr"),), (trade_id, template_id, version));
+}
+
+pub fn emit_subscribed(env: &Env, subscriber: Address, tier: crate::types::SubscriptionTier, expires_at: u32) {
+    env.events()
+        .publish((symbol_short!("sub_new"),), (subscriber, tier, expires_at));
+}
+
+pub fn emit_subscription_renewed(env: &Env, subscriber: Address, tier: crate::types::SubscriptionTier, expires_at: u32) {
+    env.events()
+        .publish((symbol_short!("sub_ren"),), (subscriber, tier, expires_at));
+}
+
+pub fn emit_subscription_cancelled(env: &Env, subscriber: Address) {
+    env.events()
+        .publish((symbol_short!("sub_can"),), subscriber);
 }

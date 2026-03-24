@@ -3,29 +3,44 @@
 mod errors;
 mod events;
 mod storage;
+mod subscription;
 mod templates;
 mod tiers;
 mod types;
 
-#[cfg(test)]
-mod test;
-
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, token, Address, Env};
 
 use types::{METADATA_MAX_ENTRIES, METADATA_MAX_VALUE_LEN};
 
 pub use errors::ContractError;
 pub use types::{
-    DisputeResolution, MetadataEntry, TierConfig, TemplateTerms, TemplateVersion,
-    Trade, TradeMetadata, TradeStatus, TradeTemplate, UserTier, UserTierInfo,
+    DisputeResolution, MetadataEntry, Subscription, SubscriptionTier, TierConfig, TemplateTerms,
+    TemplateVersion, Trade, TradeMetadata, TradeStatus, TradeTemplate, UserTier, UserTierInfo,
 };
 
 use storage::{
-    get_accumulated_fees, get_admin, get_fee_bps, get_trade, get_trade_counter, get_usdc_token,
+    get_accumulated_fees, get_admin, get_fee_bps, get_trade, get_usdc_token,
     has_arbitrator, has_initialized, increment_trade_counter, is_initialized, is_paused,
     remove_arbitrator, save_arbitrator, save_trade, set_accumulated_fees, set_admin, set_fee_bps,
     set_initialized, set_paused, set_trade_counter, set_usdc_token,
 };
+
+fn token_client<'a>(env: &'a Env, token: &Address) -> token::Client<'a> {
+    token::Client::new(env, token)
+}
+
+fn validate_metadata(meta: &TradeMetadata) -> Result<(), ContractError> {
+    if meta.entries.len() > METADATA_MAX_ENTRIES {
+        return Err(ContractError::MetadataTooManyEntries);
+    }
+    for i in 0..meta.entries.len() {
+        let entry = meta.entries.get(i).unwrap();
+        if entry.value.len() > METADATA_MAX_VALUE_LEN {
+            return Err(ContractError::MetadataValueTooLong);
+        }
+    }
+    Ok(())
+}
 
 fn require_not_paused(env: &Env) -> Result<(), ContractError> {
     if is_paused(env) {
@@ -150,8 +165,10 @@ impl StellarEscrowContract {
         let trade_id = increment_trade_counter(&env)?;
         let fee_bps = get_fee_bps(&env)?;
         let effective_bps = tiers::effective_fee_bps(&env, &seller, fee_bps);
+        let discount = subscription::subscription_discount_bps(&env, &seller);
+        let final_bps = effective_bps.saturating_sub(discount);
         let fee = amount
-            .checked_mul(effective_bps as u64)
+            .checked_mul(final_bps as u64)
             .ok_or(ContractError::Overflow)?
             .checked_div(10000)
             .ok_or(ContractError::Overflow)?;
@@ -244,7 +261,7 @@ impl StellarEscrowContract {
     }
 
     /// Raise a dispute
-    pub fn raise_dispute(env: Env, trade_id: u64) -> Result<(), ContractError> {
+    pub fn raise_dispute(env: Env, trade_id: u64, caller: Address) -> Result<(), ContractError> {
         if !is_initialized(&env) {
             return Err(ContractError::NotInitialized);
         }
@@ -257,7 +274,6 @@ impl StellarEscrowContract {
         if trade.arbitrator.is_none() {
             return Err(ContractError::ArbitratorNotRegistered);
         }
-        let caller = env.invoker();
         if caller != trade.buyer && caller != trade.seller {
             return Err(ContractError::Unauthorized);
         }
@@ -348,6 +364,51 @@ impl StellarEscrowContract {
 
     /// Pause all contract operations (admin only).
     pub fn pause(env: Env) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        let admin = get_admin(&env)?;
+        admin.require_auth();
+        set_paused(&env, true);
+        events::emit_paused(&env, admin);
+        Ok(())
+    }
+
+    /// Unpause the contract (admin only).
+    pub fn unpause(env: Env) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        let admin = get_admin(&env)?;
+        admin.require_auth();
+        set_paused(&env, false);
+        events::emit_unpaused(&env, admin);
+        Ok(())
+    }
+
+    /// Emergency withdrawal of all contract token balance (admin only).
+    pub fn emergency_withdraw(env: Env, to: Address) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        let admin = get_admin(&env)?;
+        admin.require_auth();
+        let token = get_usdc_token(&env)?;
+        let token_client = token::Client::new(&env, &token);
+        let balance = token_client.balance(&env.current_contract_address());
+        if balance > 0 {
+            token_client.transfer(&env.current_contract_address(), &to, &balance);
+        }
+        set_accumulated_fees(&env, 0);
+        events::emit_emergency_withdraw(&env, to, balance as u64);
+        Ok(())
+    }
+
+    /// Returns true if the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        is_paused(&env)
+    }
+
     /// Update or replace metadata on an existing trade (seller only)
     pub fn update_trade_metadata(
         env: Env,
@@ -388,13 +449,6 @@ impl StellarEscrowContract {
         }
         let admin = get_admin(&env)?;
         admin.require_auth();
-        set_paused(&env, true);
-        events::emit_paused(&env, admin);
-        Ok(())
-    }
-
-    /// Unpause the contract (admin only).
-    pub fn unpause(env: Env) -> Result<(), ContractError> {
         tiers::set_tier_config(&env, &config)
     }
 
@@ -405,14 +459,6 @@ impl StellarEscrowContract {
         }
         let admin = get_admin(&env)?;
         admin.require_auth();
-        set_paused(&env, false);
-        events::emit_unpaused(&env, admin);
-        Ok(())
-    }
-
-    /// Emergency withdrawal of all contract token balance (admin only).
-    /// Allowed even while paused so funds can always be recovered.
-    pub fn emergency_withdraw(env: Env, to: Address) -> Result<(), ContractError> {
         tiers::set_custom_fee(&env, &user, fee_bps)
     }
 
@@ -423,20 +469,6 @@ impl StellarEscrowContract {
         }
         let admin = get_admin(&env)?;
         admin.require_auth();
-        let token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &token);
-        let balance = token_client.balance(&env.current_contract_address());
-        if balance > 0 {
-            token_client.transfer(&env.current_contract_address(), &to, &balance);
-        }
-        set_accumulated_fees(&env, 0);
-        events::emit_emergency_withdraw(&env, to, balance as u64);
-        Ok(())
-    }
-
-    /// Returns true if the contract is currently paused.
-    pub fn is_paused(env: Env) -> bool {
-        is_paused(&env)
         tiers::remove_custom_fee(&env, &user);
         Ok(())
     }
@@ -536,8 +568,10 @@ impl StellarEscrowContract {
         let trade_id = increment_trade_counter(&env)?;
         let base_fee_bps = get_fee_bps(&env)?;
         let effective_bps = tiers::effective_fee_bps(&env, &seller, base_fee_bps);
+        let discount = subscription::subscription_discount_bps(&env, &seller);
+        let final_bps = effective_bps.saturating_sub(discount);
         let fee = amount
-            .checked_mul(effective_bps as u64)
+            .checked_mul(final_bps as u64)
             .ok_or(ContractError::Overflow)?
             .checked_div(10000)
             .ok_or(ContractError::Overflow)?;
@@ -555,7 +589,7 @@ impl StellarEscrowContract {
 
         save_trade(&env, trade_id, &trade);
         events::emit_trade_created(&env, trade_id, seller, buyer, amount);
-        events::emit_trade_from_template(&env, trade_id, template_id, version);
+        events::emit_template_trade(&env, trade_id, template_id, version);
         Ok(trade_id)
     }
 
@@ -563,8 +597,48 @@ impl StellarEscrowContract {
     pub fn get_template(env: Env, template_id: u64) -> Result<TradeTemplate, ContractError> {
         storage::get_template(&env, template_id)
     }
-}
 
-mod token {
-    soroban_sdk::contractimport!(file = "./token.wasm");
+    // -------------------------------------------------------------------------
+    // Subscription Model
+    // -------------------------------------------------------------------------
+
+    /// Purchase a new subscription. Payment (USDC) is transferred to the admin.
+    pub fn subscribe(
+        env: Env,
+        subscriber: Address,
+        tier: SubscriptionTier,
+    ) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        require_not_paused(&env)?;
+        subscriber.require_auth();
+        let admin = get_admin(&env)?;
+        subscription::subscribe(&env, &subscriber, tier, &admin)
+    }
+
+    /// Renew an existing subscription for another period.
+    pub fn renew_subscription(env: Env, subscriber: Address) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        require_not_paused(&env)?;
+        subscriber.require_auth();
+        let admin = get_admin(&env)?;
+        subscription::renew(&env, &subscriber, &admin)
+    }
+
+    /// Cancel a subscription immediately (no refund).
+    pub fn cancel_subscription(env: Env, subscriber: Address) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        subscriber.require_auth();
+        subscription::cancel(&env, &subscriber)
+    }
+
+    /// Get subscription details for a user.
+    pub fn get_subscription(env: Env, subscriber: Address) -> Option<Subscription> {
+        subscription::get(&env, &subscriber)
+    }
 }

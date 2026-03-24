@@ -84,6 +84,42 @@ pub struct Trade {
 }
 
 // ---------------------------------------------------------------------------
+// Subscription Model
+// ---------------------------------------------------------------------------
+
+/// Duration of a subscription in ledgers (~1 ledger ≈ 5 s; 30 days ≈ 518_400 ledgers)
+pub const SUBSCRIPTION_DURATION_LEDGERS: u32 = 518_400;
+
+/// Monthly price in stroops (USDC micro-units) per tier
+pub const SUB_PRICE_BASIC: u64 = 5_000_000;   // 5 USDC
+pub const SUB_PRICE_PRO: u64 = 15_000_000;    // 15 USDC
+pub const SUB_PRICE_ENTERPRISE: u64 = 50_000_000; // 50 USDC
+
+/// Fee discounts in bps applied on top of the tier/base fee
+pub const SUB_DISCOUNT_BASIC_BPS: u32 = 20;       // −0.20 %
+pub const SUB_DISCOUNT_PRO_BPS: u32 = 50;          // −0.50 %
+pub const SUB_DISCOUNT_ENTERPRISE_BPS: u32 = 100;  // −1.00 %
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SubscriptionTier {
+    Basic,
+    Pro,
+    Enterprise,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Subscription {
+    pub subscriber: Address,
+    pub tier: SubscriptionTier,
+    /// Ledger sequence at which the subscription expires
+    pub expires_at: u32,
+    /// Ledger sequence of the last renewal / purchase
+    pub renewed_at: u32,
+}
+
+// ---------------------------------------------------------------------------
 // Trade Templates
 // ---------------------------------------------------------------------------
 
