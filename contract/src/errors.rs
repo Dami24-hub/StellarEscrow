@@ -27,4 +27,11 @@ pub enum ContractError {
     SubscriptionNotFound = 21,
     SubscriptionExpired = 22,
     SubscriptionAlreadyActive = 23,
+    ProposalNotFound = 24,
+    ProposalNotActive = 25,
+    AlreadyVoted = 26,
+    InsufficientVotingPower = 27,
+    ProposalNotPassed = 28,
+    ProposalAlreadyExecuted = 29,
+    VotingEnded = 30,
 }

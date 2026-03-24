@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Env};
 
 use crate::errors::ContractError;
-use crate::types::{TierConfig, Trade, TradeTemplate, UserTierInfo, Subscription};
+use crate::types::{TierConfig, Trade, TradeTemplate, UserTierInfo, Subscription, Proposal};
 
 const INITIALIZED: &str = "INIT";
 const ADMIN: &str = "ADMIN";
@@ -17,6 +17,11 @@ const USER_TIER_PREFIX: &str = "UTIER";
 const TEMPLATE_COUNTER: &str = "TMPL_CTR";
 const TEMPLATE_PREFIX: &str = "TMPL";
 const SUBSCRIPTION_PREFIX: &str = "SUB";
+const GOV_TOKEN: &str = "GOV_TKN";
+const PROPOSAL_COUNTER: &str = "PROP_CTR";
+const PROPOSAL_PREFIX: &str = "PROP";
+const VOTE_PREFIX: &str = "VOTE";
+const DELEGATE_PREFIX: &str = "DELEG";
 
 // Initialization
 pub fn is_initialized(env: &Env) -> bool {
@@ -199,5 +204,50 @@ pub fn get_subscription(env: &Env, subscriber: &Address) -> Option<Subscription>
 
 pub fn remove_subscription(env: &Env, subscriber: &Address) {
     let key = (SUBSCRIPTION_PREFIX, subscriber);
+    env.storage().persistent().remove(&key);
+}
+
+
+// Governance
+pub fn set_gov_token(env: &Env, token: &Address) {
+    env.storage().instance().set(&GOV_TOKEN, token);
+}
+pub fn get_gov_token(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&GOV_TOKEN)
+}
+pub fn get_proposal_counter(env: &Env) -> u64 {
+    env.storage().instance().get(&PROPOSAL_COUNTER).unwrap_or(0)
+}
+pub fn increment_proposal_counter(env: &Env) -> Result<u64, crate::errors::ContractError> {
+    let next = get_proposal_counter(env).checked_add(1).ok_or(crate::errors::ContractError::Overflow)?;
+    env.storage().instance().set(&PROPOSAL_COUNTER, &next);
+    Ok(next)
+}
+pub fn save_proposal(env: &Env, id: u64, proposal: &Proposal) {
+    let key = (PROPOSAL_PREFIX, id);
+    env.storage().persistent().set(&key, proposal);
+}
+pub fn get_proposal(env: &Env, id: u64) -> Result<Proposal, crate::errors::ContractError> {
+    let key = (PROPOSAL_PREFIX, id);
+    env.storage().persistent().get(&key).ok_or(crate::errors::ContractError::ProposalNotFound)
+}
+pub fn has_voted(env: &Env, proposal_id: u64, voter: &Address) -> bool {
+    let key = (VOTE_PREFIX, proposal_id, voter);
+    env.storage().persistent().has(&key)
+}
+pub fn mark_voted(env: &Env, proposal_id: u64, voter: &Address) {
+    let key = (VOTE_PREFIX, proposal_id, voter);
+    env.storage().persistent().set(&key, &true);
+}
+pub fn set_delegate(env: &Env, delegator: &Address, delegatee: &Address) {
+    let key = (DELEGATE_PREFIX, delegator);
+    env.storage().persistent().set(&key, delegatee);
+}
+pub fn get_delegate(env: &Env, delegator: &Address) -> Option<Address> {
+    let key = (DELEGATE_PREFIX, delegator);
+    env.storage().persistent().get(&key)
+}
+pub fn remove_delegate(env: &Env, delegator: &Address) {
+    let key = (DELEGATE_PREFIX, delegator);
     env.storage().persistent().remove(&key);
 }

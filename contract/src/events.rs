@@ -134,3 +134,28 @@ pub fn emit_subscription_cancelled(env: &Env, subscriber: Address) {
     env.events()
         .publish((symbol_short!("sub_can"),), subscriber);
 }
+
+pub fn emit_proposal_created(env: &Env, proposal_id: u64, proposer: Address) {
+    env.events()
+        .publish((symbol_short!("prop_cr"),), (proposal_id, proposer));
+}
+
+pub fn emit_vote_cast(env: &Env, proposal_id: u64, voter: Address, support: bool, weight: i128) {
+    env.events()
+        .publish((symbol_short!("voted"),), (proposal_id, voter, support, weight));
+}
+
+pub fn emit_proposal_executed(env: &Env, proposal_id: u64) {
+    env.events()
+        .publish((symbol_short!("prop_ex"),), proposal_id);
+}
+
+pub fn emit_delegated(env: &Env, delegator: Address, delegatee: Address) {
+    env.events()
+        .publish((symbol_short!("delegat"),), (delegator, delegatee));
+}
+
+pub fn emit_fees_distributed(env: &Env, to: Address, amount: u64) {
+    env.events()
+        .publish((symbol_short!("fee_dst"),), (to, amount));
+}

@@ -2,6 +2,7 @@
 
 mod errors;
 mod events;
+mod governance;
 mod storage;
 mod subscription;
 mod templates;
@@ -14,8 +15,9 @@ use types::{METADATA_MAX_ENTRIES, METADATA_MAX_VALUE_LEN};
 
 pub use errors::ContractError;
 pub use types::{
-    DisputeResolution, MetadataEntry, Subscription, SubscriptionTier, TierConfig, TemplateTerms,
-    TemplateVersion, Trade, TradeMetadata, TradeStatus, TradeTemplate, UserTier, UserTierInfo,
+    DisputeResolution, MetadataEntry, Proposal, ProposalAction, ProposalStatus,
+    Subscription, SubscriptionTier, TierConfig, TemplateTerms, TemplateVersion,
+    Trade, TradeMetadata, TradeStatus, TradeTemplate, UserTier, UserTierInfo,
 };
 
 use storage::{
@@ -640,5 +642,87 @@ impl StellarEscrowContract {
     /// Get subscription details for a user.
     pub fn get_subscription(env: Env, subscriber: Address) -> Option<Subscription> {
         subscription::get(&env, &subscriber)
+    }
+
+    // -------------------------------------------------------------------------
+    // Governance
+    // -------------------------------------------------------------------------
+
+    /// Admin: set the governance token address (one-time setup).
+    pub fn set_gov_token(env: Env, token: Address) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        let admin = get_admin(&env)?;
+        admin.require_auth();
+        storage::set_gov_token(&env, &token);
+        Ok(())
+    }
+
+    /// Create a governance proposal.
+    pub fn create_proposal(
+        env: Env,
+        proposer: Address,
+        action: ProposalAction,
+    ) -> Result<u64, ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        require_not_paused(&env)?;
+        proposer.require_auth();
+        governance::create_proposal(&env, &proposer, action)
+    }
+
+    /// Vote on a proposal.
+    pub fn cast_vote(
+        env: Env,
+        voter: Address,
+        proposal_id: u64,
+        support: bool,
+    ) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        require_not_paused(&env)?;
+        voter.require_auth();
+        governance::cast_vote(&env, &voter, proposal_id, support)
+    }
+
+    /// Execute a passed proposal after voting ends.
+    pub fn execute_proposal(env: Env, proposal_id: u64) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        governance::execute_proposal(&env, proposal_id)
+    }
+
+    /// Delegate voting power to another address.
+    pub fn delegate(env: Env, delegator: Address, delegatee: Address) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        delegator.require_auth();
+        governance::delegate(&env, &delegator, &delegatee);
+        Ok(())
+    }
+
+    /// Remove delegation, reclaiming own voting power.
+    pub fn undelegate(env: Env, delegator: Address) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        delegator.require_auth();
+        governance::undelegate(&env, &delegator);
+        Ok(())
+    }
+
+    /// Get a proposal by ID.
+    pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, ContractError> {
+        governance::get(&env, proposal_id)
+    }
+
+    /// Get total number of proposals created.
+    pub fn get_proposal_count(env: Env) -> u64 {
+        governance::proposal_count(&env)
     }
 }

@@ -120,6 +120,52 @@ pub struct Subscription {
 }
 
 // ---------------------------------------------------------------------------
+// Governance
+// ---------------------------------------------------------------------------
+
+/// Total supply of governance tokens minted at initialization
+pub const GOV_TOTAL_SUPPLY: i128 = 1_000_000_000_000_000; // 1 billion (7 decimals)
+
+/// Voting period in ledgers (~7 days)
+pub const GOV_VOTING_PERIOD: u32 = 1_209_600;
+
+/// Minimum tokens required to create a proposal
+pub const GOV_PROPOSAL_THRESHOLD: i128 = 10_000_000_000; // 10,000 tokens
+
+/// Minimum quorum (% of total supply * 100, i.e. 400 = 4%)
+pub const GOV_QUORUM_BPS: u32 = 400;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProposalStatus {
+    Active,
+    Passed,
+    Rejected,
+    Executed,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProposalAction {
+    UpdateFeeBps(u32),
+    UpdateTierConfig(TierConfig),
+    DistributeFees(Address),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Proposal {
+    pub id: u64,
+    pub proposer: Address,
+    pub action: ProposalAction,
+    pub votes_for: i128,
+    pub votes_against: i128,
+    pub status: ProposalStatus,
+    pub created_at: u32,
+    pub ends_at: u32,
+}
+
+// ---------------------------------------------------------------------------
 // Trade Templates
 // ---------------------------------------------------------------------------
 
