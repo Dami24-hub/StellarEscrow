@@ -3,6 +3,8 @@
  * WCAG 2.1 AA Compliance Implementation
  */
 
+import { setLocale, getLocale, formatCurrency, formatDate } from './i18n.js';
+
 (function() {
     'use strict';
 
@@ -1002,6 +1004,16 @@
         const contrastToggle = $('#contrast-toggle');
         if (contrastToggle) {
             contrastToggle.addEventListener('click', toggleHighContrast);
+        }
+
+        // Initialize language switcher
+        const langSelect = $('#lang-select');
+        if (langSelect) {
+            langSelect.value = getLocale();
+            langSelect.addEventListener('change', (e) => {
+                setLocale(e.target.value);
+                announce(document.documentElement.lang === 'ar' ? 'تم تغيير اللغة' : 'Language changed');
+            });
         }
 
         // Fetch initial data

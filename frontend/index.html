@@ -13,7 +13,7 @@
 </head>
 <body>
     <!-- Skip to main content link for screen readers -->
-    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <a href="#main-content" class="skip-link" data-i18n="a11y.skipToMain">Skip to main content</a>
     
     <!-- High contrast mode toggle -->
     <button 
@@ -22,9 +22,10 @@
         type="button"
         aria-pressed="false"
         aria-label="Toggle high contrast mode"
+        data-i18n-aria="a11y.highContrast"
     >
         <span class="toggle-icon" aria-hidden="true">◐</span>
-        <span class="toggle-text">High Contrast</span>
+        <span class="toggle-text" data-i18n="a11y.highContrast">High Contrast</span>
     </button>
 
     <!-- Live region for announcements -->
@@ -50,14 +51,25 @@
                     <span class="hamburger" aria-hidden="true"></span>
                 </button>
                 <ul id="main-menu" class="nav-menu" role="menubar">
-                    <li role="none"><a href="#dashboard" role="menuitem" class="nav-link active" aria-current="page">Dashboard</a></li>
-                    <li role="none"><a href="#events" role="menuitem" class="nav-link">View Events</a></li>
-                    <li role="none"><a href="#search" role="menuitem" class="nav-link">Search</a></li>
-                    <li role="none"><a href="#disputes" role="menuitem" class="nav-link">Disputes</a></li>
-                    <li role="none"><a href="#arbitrator" role="menuitem" class="nav-link">Arbitrator</a></li>
-                    <li role="none"><a href="#help" role="menuitem" class="nav-link">Help Center</a></li>
-                    <li role="none"><a href="#api-docs" role="menuitem" class="nav-link">API Documentation</a></li>
+                    <li role="none"><a href="#dashboard" role="menuitem" class="nav-link active" aria-current="page" data-i18n="nav.dashboard">Dashboard</a></li>
+                    <li role="none"><a href="#events" role="menuitem" class="nav-link" data-i18n="nav.events">View Events</a></li>
+                    <li role="none"><a href="#search" role="menuitem" class="nav-link" data-i18n="nav.search">Search</a></li>
+                    <li role="none"><a href="#disputes" role="menuitem" class="nav-link" data-i18n="nav.disputes">Disputes</a></li>
+                    <li role="none"><a href="#arbitrator" role="menuitem" class="nav-link" data-i18n="nav.arbitrator">Arbitrator</a></li>
+                    <li role="none"><a href="#help" role="menuitem" class="nav-link" data-i18n="nav.help">Help Center</a></li>
+                    <li role="none"><a href="#api-docs" role="menuitem" class="nav-link" data-i18n="nav.apiDocs">API Documentation</a></li>
                 </ul>
+
+                <!-- Language Switcher -->
+                <div class="lang-switcher">
+                    <label for="lang-select" class="visually-hidden" data-i18n="common.language">Language</label>
+                    <select id="lang-select" aria-label="Select language">
+                        <option value="en">English</option>
+                        <option value="fr">Français</option>
+                        <option value="es">Español</option>
+                        <option value="ar">العربية</option>
+                    </select>
+                </div>
                 
                 <!-- Notifications -->
                 <div class="notification-controls">
@@ -89,11 +101,12 @@
                         class="btn btn-wallet"
                         type="button"
                         aria-label="Connect Stellar wallet"
+                        data-i18n-aria="wallet.connect"
                         aria-expanded="false"
                         aria-controls="wallet-menu"
                     >
                         <span class="wallet-icon" aria-hidden="true">◆</span>
-                        <span class="wallet-text">Connect Wallet</span>
+                        <span class="wallet-text" data-i18n="wallet.connect">Connect Wallet</span>
                     </button>
                     
                     <!-- Wallet Menu -->
