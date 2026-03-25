@@ -277,7 +277,7 @@ impl StellarEscrowContract {
             metadata,
         };
         save_trade(&env, trade_id, &trade);
-        events::emit_trade_created(&env, trade_id, seller, buyer, amount);
+        events::emit_trade_created(&env, trade_id, seller, buyer, amount, trade.currency);
         Ok(trade_id)
     }
 
