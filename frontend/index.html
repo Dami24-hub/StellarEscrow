@@ -56,6 +56,94 @@
                     <li role="none"><a href="#help" role="menuitem" class="nav-link">Help Center</a></li>
                     <li role="none"><a href="#api-docs" role="menuitem" class="nav-link">API Documentation</a></li>
                 </ul>
+                
+                <!-- Wallet Connection -->
+                <div id="wallet-container" class="wallet-container" role="region" aria-label="Wallet connection">
+                    <button 
+                        id="wallet-connect-btn"
+                        class="btn btn-wallet"
+                        type="button"
+                        aria-label="Connect Stellar wallet"
+                        aria-expanded="false"
+                        aria-controls="wallet-menu"
+                    >
+                        <span class="wallet-icon" aria-hidden="true">◆</span>
+                        <span class="wallet-text">Connect Wallet</span>
+                    </button>
+                    
+                    <!-- Wallet Menu -->
+                    <div id="wallet-menu" class="wallet-menu" hidden role="menu" aria-label="Wallet options">
+                        <div class="wallet-menu-header">
+                            <h3>Select Wallet</h3>
+                        </div>
+                        <button 
+                            type="button"
+                            class="wallet-option"
+                            data-provider="freighter"
+                            role="menuitem"
+                            aria-label="Connect with Freighter wallet"
+                        >
+                            <span class="wallet-option-icon">🔐</span>
+                            <span class="wallet-option-name">Freighter</span>
+                        </button>
+                        <button 
+                            type="button"
+                            class="wallet-option"
+                            data-provider="albedo"
+                            role="menuitem"
+                            aria-label="Connect with Albedo wallet"
+                        >
+                            <span class="wallet-option-icon">🛡️</span>
+                            <span class="wallet-option-name">Albedo</span>
+                        </button>
+                        <button 
+                            type="button"
+                            class="wallet-option"
+                            data-provider="walletconnect"
+                            role="menuitem"
+                            aria-label="Connect with WalletConnect"
+                        >
+                            <span class="wallet-option-icon">📱</span>
+                            <span class="wallet-option-name">WalletConnect</span>
+                        </button>
+                    </div>
+                    
+                    <!-- Connected Wallet Display -->
+                    <div id="wallet-connected" class="wallet-connected" hidden>
+                        <div class="wallet-info">
+                            <span id="wallet-provider-badge" class="wallet-provider-badge"></span>
+                            <span id="wallet-address-display" class="wallet-address-display"></span>
+                        </div>
+                        <button 
+                            id="wallet-menu-toggle"
+                            type="button"
+                            class="wallet-menu-toggle"
+                            aria-label="Wallet menu"
+                            aria-expanded="false"
+                            aria-controls="wallet-dropdown"
+                        >
+                            ⋮
+                        </button>
+                        <div id="wallet-dropdown" class="wallet-dropdown" hidden role="menu">
+                            <button 
+                                type="button"
+                                class="wallet-dropdown-item"
+                                id="switch-wallet-btn"
+                                role="menuitem"
+                            >
+                                Switch Wallet
+                            </button>
+                            <button 
+                                type="button"
+                                class="wallet-dropdown-item"
+                                id="disconnect-wallet-btn"
+                                role="menuitem"
+                            >
+                                Disconnect
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </nav>
     </header>
@@ -289,6 +377,117 @@
             </div>
         </section>
 
+        <!-- Disputes Section -->
+        <section id="disputes" aria-labelledby="disputes-heading" class="section">
+            <div class="container">
+                <h2 id="disputes-heading" class="section-title">Dispute Management</h2>
+                
+                <div class="disputes-header">
+                    <button 
+                        id="raise-dispute-btn"
+                        type="button"
+                        class="btn btn-primary"
+                        aria-label="Raise a new dispute"
+                    >
+                        Raise Dispute
+                    </button>
+                </div>
+
+                <!-- Disputes List -->
+                <div class="disputes-container" role="region" aria-label="Disputes list">
+                    <div id="disputes-list" class="disputes-list">
+                        <p class="empty-state">No disputes found</p>
+                    </div>
+                </div>
+
+                <!-- Dispute Details -->
+                <div id="dispute-details" class="dispute-details" role="region" aria-label="Dispute details">
+                </div>
+            </div>
+        </section>
+
+        <!-- Dispute Modal -->
+        <div id="dispute-modal" class="modal" hidden role="dialog" aria-labelledby="dispute-modal-title" aria-modal="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="dispute-modal-title">Raise Dispute</h3>
+                    <button 
+                        id="dispute-modal-close"
+                        type="button"
+                        class="btn btn-close"
+                        aria-label="Close dialog"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                <form id="dispute-form" class="dispute-form">
+                    <div class="form-group">
+                        <label for="dispute-trade-id" class="form-label">Trade ID *</label>
+                        <input 
+                            type="number"
+                            id="dispute-trade-id"
+                            class="form-input"
+                            required
+                            min="1"
+                            aria-describedby="trade-id-help"
+                        >
+                        <span id="trade-id-help" class="form-help">Enter the trade ID to dispute</span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="dispute-reason" class="form-label">Reason for Dispute *</label>
+                        <textarea 
+                            id="dispute-reason"
+                            class="form-textarea"
+                            required
+                            rows="4"
+                            placeholder="Describe the issue..."
+                            aria-describedby="reason-help"
+                        ></textarea>
+                        <span id="reason-help" class="form-help">Provide details about the dispute</span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="evidence-input" class="form-label">Upload Evidence</label>
+                        <input 
+                            type="file"
+                            id="evidence-input"
+                            class="form-input"
+                            multiple
+                            accept=".jpg,.jpeg,.png,.pdf,.txt"
+                            aria-describedby="evidence-help"
+                        >
+                        <span id="evidence-help" class="form-help">
+                            Supported: JPG, PNG, PDF, TXT (max 5MB each)
+                        </span>
+                    </div>
+
+                    <div id="evidence-list" class="evidence-list">
+                        <p class="empty-state">No evidence uploaded</p>
+                    </div>
+
+                    <div class="form-actions">
+                        <button 
+                            type="submit"
+                            class="btn btn-primary"
+                            aria-label="Submit dispute"
+                        >
+                            Submit Dispute
+                        </button>
+                        <button 
+                            type="button"
+                            class="btn btn-secondary"
+                            id="dispute-cancel-btn"
+                            aria-label="Cancel"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <!-- Help Center Section -->
         <section id="help" aria-labelledby="help-heading" class="section">
             <div class="container">
@@ -499,6 +698,8 @@
     <!-- Toast notifications container -->
     <div id="toast-container" class="toast-container" role="alert" aria-live="assertive" aria-label="Notifications"></div>
 
+    <script src="wallet.js"></script>
+    <script src="disputes.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
