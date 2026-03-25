@@ -1,21 +1,20 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::Json,
-    response::Response,
+    response::{Json, Response},
 };
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::error::AppError;
-use crate::models::{EventQuery, PagedResponse, ReplayRequest, WebSocketMessage};
 use crate::models::{
-    DiscoveryQuery, EventQuery, GlobalSearchQuery, GlobalSearchResponse, HistoryQuery, ReplayRequest,
+    AuditQuery, DiscoveryQuery, Event, EventQuery, GlobalSearchQuery, GlobalSearchResponse,
+    HistoryQuery, NewAuditLog, PagedResponse, ReplayRequest, RetentionRequest, RetentionResponse,
     SuggestionQuery, TradeSearchQuery, WebSocketMessage,
 };
 use crate::websocket::WebSocketManager;
-use crate::{database::Database, models::Event};
+use crate::database::Database;
 
 /// Default page size — kept small for mobile clients.
 const DEFAULT_LIMIT: i64 = 20;
@@ -34,7 +33,11 @@ pub async fn api_index() -> Json<serde_json::Value> {
             "events_by_type":  "GET  /events/type/:event_type",
             "replay":          "POST /events/replay  {from_ledger, to_ledger?}",
             "websocket":       "GET  /ws",
-            "help":            "GET  /help"
+            "help":            "GET  /help",
+            "audit_ingest":    "POST /audit  {actor, category, action, outcome, ...}",
+            "audit_query":     "GET  /audit?actor=&category=&action=&outcome=&severity=&from=&to=&limit=&offset=",
+            "audit_stats":     "GET  /audit/stats",
+            "audit_purge":     "DELETE /audit/purge  {older_than_days?}"
         }
     }))
 }
@@ -230,4 +233,58 @@ pub async fn search_history(
 pub struct AppState {
     pub database: Arc<Database>,
     pub ws_manager: Arc<WebSocketManager>,
+}
+
+// =============================================================================
+// Audit Log Handlers
+// =============================================================================
+
+/// POST /audit — ingest a new audit log entry.
+pub async fn create_audit_log(
+    State(state): State<AppState>,
+    Json(body): Json<NewAuditLog>,
+) -> Result<Json<crate::models::AuditLog>, AppError> {
+    let log = state.database.insert_audit_log(&body).await?;
+    Ok(Json(log))
+}
+
+/// GET /audit — query audit logs with optional filters.
+pub async fn query_audit_logs(
+    Query(params): Query<AuditQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<PagedResponse<crate::models::AuditLog>>, AppError> {
+    let limit = params.limit.unwrap_or(50).clamp(1, 500);
+    let offset = params.offset.unwrap_or(0).max(0);
+    let q = AuditQuery { limit: Some(limit), offset: Some(offset), ..params };
+
+    let (logs, total) = tokio::try_join!(
+        state.database.query_audit_logs(&q),
+        state.database.count_audit_logs(&q),
+    )?;
+
+    Ok(Json(PagedResponse {
+        has_more: offset + limit < total,
+        items: logs,
+        total,
+        limit,
+        offset,
+    }))
+}
+
+/// GET /audit/stats — aggregated analysis (counts by category, outcome, severity, top actors/actions).
+pub async fn audit_stats(
+    State(state): State<AppState>,
+) -> Result<Json<crate::models::AuditStats>, AppError> {
+    let stats = state.database.audit_stats().await?;
+    Ok(Json(stats))
+}
+
+/// DELETE /audit/purge — apply retention policy, deleting logs older than N days.
+pub async fn purge_audit_logs(
+    State(state): State<AppState>,
+    Json(body): Json<RetentionRequest>,
+) -> Result<Json<RetentionResponse>, AppError> {
+    let days = body.older_than_days.unwrap_or(90).clamp(1, 365);
+    let deleted = state.database.purge_old_audit_logs(days).await?;
+    Ok(Json(RetentionResponse { deleted, older_than_days: days }))
 }
