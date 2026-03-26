@@ -54,7 +54,29 @@ services:
                sleep 12h & wait $${!};
              done"
 
+  backup:
+    image: postgres:15
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://indexer:password@postgres:5432/stellar_escrow}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - BACKUP_DIR=/var/backups/stellarescrow
+      - RETENTION_DAYS=${RETENTION_DAYS:-30}
+      - BACKUP_ALERT_WEBHOOK=${BACKUP_ALERT_WEBHOOK:-}
+    volumes:
+      - backup_data:/var/backups/stellarescrow
+      - ./scripts/backup.sh:/scripts/backup.sh:ro
+    depends_on:
+      - postgres
+    # Run daily at 02:00 UTC
+    entrypoint: >
+      sh -c "trap exit TERM;
+             while :; do
+               sleep 86400 & wait $${!};
+               bash /scripts/backup.sh;
+             done"
+
 volumes:
   postgres_data:
   certbot_webroot:
   letsencrypt:
+  backup_data:
