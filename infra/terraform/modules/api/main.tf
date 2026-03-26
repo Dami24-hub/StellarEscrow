@@ -124,6 +124,7 @@ resource "aws_ecs_cluster" "main" {
   }
 }
 
+# IAM role for ECS task execution (pull images, write logs, read secrets)
 # IAM role for ECS task execution
 resource "aws_iam_role" "ecs_task_execution" {
   name = "${var.name_prefix}-ecs-exec-role"
@@ -141,6 +142,21 @@ resource "aws_iam_role" "ecs_task_execution" {
 resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   role       = aws_iam_role.ecs_task_execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# Allow task execution role to read the DB secret from Secrets Manager
+resource "aws_iam_role_policy" "read_db_secret" {
+  name = "${var.name_prefix}-read-db-secret"
+  role = aws_iam_role.ecs_task_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = [var.db_secret_arn]
+    }]
+  })
 }
 
 # CloudWatch log group
@@ -168,6 +184,9 @@ resource "aws_ecs_task_definition" "api" {
     }]
 
     environment = [
+      { name = "NODE_ENV",                             value = var.environment },
+      { name = "PORT",                                 value = tostring(var.container_port) },
+      { name = "STELLAR_ESCROW__STELLAR__NETWORK",     value = var.stellar_network },
       { name = "NODE_ENV",                          value = var.environment },
       { name = "PORT",                              value = tostring(var.container_port) },
       { name = "STELLAR_ESCROW__STELLAR__NETWORK",  value = var.stellar_network },
@@ -198,6 +217,7 @@ resource "aws_ecs_task_definition" "api" {
   }])
 }
 
+# ECS Service — security group and target group come from the load_balancer module
 # ECS Service
 resource "aws_ecs_service" "api" {
   name            = "${var.name_prefix}-api"
@@ -208,11 +228,13 @@ resource "aws_ecs_service" "api" {
 
   network_configuration {
     subnets          = var.private_subnet_ids
+    security_groups  = [var.ecs_security_group_id]
     security_groups  = [aws_security_group.api.id]
     assign_public_ip = false
   }
 
   load_balancer {
+    target_group_arn = var.api_target_group_arn
     target_group_arn = aws_lb_target_group.api.arn
     container_name   = "api"
     container_port   = var.container_port
@@ -221,5 +243,9 @@ resource "aws_ecs_service" "api" {
   deployment_minimum_healthy_percent = 50
   deployment_maximum_percent         = 200
 
+  # Allow autoscaling to manage desired_count without Terraform drift
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
   depends_on = [aws_lb_listener.http]
 }

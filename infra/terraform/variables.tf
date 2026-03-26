@@ -14,11 +14,13 @@ variable "aws_region" {
 }
 
 variable "app_version" {
+  description = "Application version tag — used for tagging and image selection"
   description = "Application version tag (e.g. 1.2.3) — used for tagging and image selection"
   type        = string
   default     = "latest"
 }
 
+# ── Networking ────────────────────────────────────────────────────────────────
 # ── Networking ──────────────────────────────────────────────────────────────
 
 variable "vpc_cidr" {
@@ -33,6 +35,7 @@ variable "availability_zones" {
   default     = ["us-east-1a", "us-east-1b"]
 }
 
+# ── Database ──────────────────────────────────────────────────────────────────
 # ── Database ─────────────────────────────────────────────────────────────────
 
 variable "db_instance_class" {
@@ -55,6 +58,7 @@ variable "db_username" {
 }
 
 variable "db_password" {
+  description = "PostgreSQL master password — inject via TF_VAR_db_password"
   description = "PostgreSQL master password — inject via TF_VAR_db_password or secrets manager"
   type        = string
   sensitive   = true
@@ -69,6 +73,7 @@ variable "db_allocated_storage_gb" {
 # ── API / App ─────────────────────────────────────────────────────────────────
 
 variable "api_image" {
+  description = "Docker image URI for the API service"
   description = "Docker image URI for the API service (ECR or Docker Hub)"
   type        = string
   default     = "stellarescrow/api:latest"
@@ -90,6 +95,26 @@ variable "api_memory" {
   description = "ECS task memory in MiB"
   type        = number
   default     = 512
+}
+
+variable "api_container_port" {
+  description = "Port the API container listens on"
+  type        = number
+  default     = 3000
+}
+
+# ── Load Balancer ─────────────────────────────────────────────────────────────
+
+variable "certificate_arn" {
+  description = "ACM certificate ARN for HTTPS. Leave empty to use HTTP only (dev)."
+  type        = string
+  default     = ""
+}
+
+variable "alarm_sns_arn" {
+  description = "SNS topic ARN for CloudWatch alarm notifications. Leave empty to disable."
+  type        = string
+  default     = ""
 }
 
 # ── Stellar ───────────────────────────────────────────────────────────────────
