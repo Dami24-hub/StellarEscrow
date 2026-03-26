@@ -18,11 +18,13 @@ use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
 
 mod auth;
+mod cache;
 mod config;
 mod database;
 mod error;
 mod event_monitor;
 mod file_handlers;
+mod gateway;
 mod handlers;
 mod health;
 mod help;
@@ -32,6 +34,7 @@ mod rate_limit_handlers;
 mod storage;
 mod websocket;
 mod fraud_service;
+mod notification_service;
 
 #[cfg(test)]
 mod test;
@@ -40,6 +43,7 @@ use config::Config;
 use database::Database;
 use event_monitor::EventMonitor;
 use auth::auth_middleware;
+use gateway::{GatewayConfig, GatewayState};
 use handlers::{AppState, *};
 use health::{alerts, liveness, metrics, readiness, status_page, HealthMonitor, HealthState};
 use file_handlers::{delete_file, download_file, list_files, upload_file};
@@ -52,6 +56,7 @@ use help::{
     get_contact, get_docs, get_faqs, get_tutorial_by_id, get_tutorials, help_index, search_help,
 };
 use fraud_service::FraudDetectionService;
+use notification_service::NotificationService;
 
 #[derive(Parser)]
 #[command(name = "stellar-escrow-indexer")]
@@ -72,12 +77,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
 
-    // Load configuration
+    // Load configuration (TOML file + STELLAR_ESCROW__* env var overrides)
     let config = Config::load(&args.config)?;
-    info!("Loaded configuration from {}", args.config);
+    info!(
+        "Loaded configuration from {} | env={} version={} schema_v={}",
+        args.config,
+        config.meta.environment,
+        config.meta.version,
+        config.meta.schema_version,
+    );
 
-    // Initialize database
-    let db_pool = PgPool::connect(&config.database.url).await?;
+    // Initialize database with tuned connection pool
+    let db_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(config.database.max_connections)
+        .min_connections(config.database.min_connections)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect(&config.database.url)
+        .await?;
     sqlx::migrate!("./migrations").run(&db_pool).await?;
     let database = Arc::new(Database::new(db_pool.clone()));
 
@@ -102,8 +118,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize rate limiter
     let rate_limiter = Arc::new(RateLimiter::new(config.rate_limit.clone()));
+    
     // Initialize API auth config
     let auth_config = Arc::new(config.auth.clone());
+    
+    // Initialize API gateway configuration
+    // Gateway provides centralized routing, load balancing, and authentication
+    let gateway_config = GatewayConfig {
+        load_balancing_enabled: !config.gateway.service_instances.is_empty(),
+        service_instances: config.gateway.service_instances.clone(),
+        request_logging: true,
+        transform_responses: true,
+    };
+    let gateway_state = Arc::new(GatewayState::new(gateway_config, auth_config.clone()));
+    
     // Initialize file storage service
     let storage_service = Arc::new(
         StorageService::new(db_pool, &config.storage.base_dir).await?,
@@ -111,12 +139,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize Fraud Detection Service
     let fraud_service = Arc::new(FraudDetectionService::new(database.clone()).await);
 
+    // Initialize Notification Service
+    let notification_service = Arc::new(NotificationService::new(
+        database.clone(),
+        config.notification.clone(),
+    ));
+
     // Initialize event monitor
     let event_monitor = EventMonitor::new(
         config.stellar.clone(),
         database.clone(),
         ws_manager.clone(),
         fraud_service.clone(),
+        notification_service.clone(),
     );
 
     // Start event monitoring in background
@@ -139,10 +174,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/files/:id", get(download_file).delete(delete_file))
         .with_state(storage_service);
 
-    // Versioned API router (v1)
+    // Versioned API router (v1) - includes gateway-enhanced endpoints
     let v1_api = Router::new()
         .route("/", get(api_index))
         .route("/docs", get(api_docs))
+        .route("/gateway/stats", get(gateway_stats))
         .route("/events", get(get_events))
         .route("/events/:id", get(get_event_by_id))
         .route("/events/trade/:trade_id", get(get_events_by_trade_id))
@@ -181,8 +217,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/search/discovery", get(discover_entities))
         .route("/search/suggestions", get(search_suggestions))
         .route("/search/history", get(search_history))
+        .route("/search/analytics", get(search_analytics))
         .route("/fraud/alerts", get(get_fraud_alerts))
         .route("/fraud/review", post(update_fraud_review))
+        // Notifications
+        .route("/notifications/preferences/:address", get(get_notification_preferences).put(upsert_notification_preferences))
+        .route("/notifications/log/:address", get(get_notification_log))
         .route("/ws", get(ws_handler))
         .route("/help", get(help_index))
         .route("/help/faqs", get(get_faqs))
@@ -202,8 +242,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             database,
             ws_manager,
             health: health_state,
+            fraud_service,
+            notification_service,
+            gateway: gateway_state.clone(),
         })
-        .layer(middleware::from_fn_with_state(auth_config, auth_middleware))
+        // Apply gateway middleware for centralized routing and auth
+        .layer(middleware::from_fn_with_state(gateway_state.clone(), gateway::gateway_middleware))
+        // Apply rate limiting middleware
         .layer(middleware::from_fn_with_state(rate_limiter, rate_limit_middleware))
         .layer(CorsLayer::permissive());
 

@@ -71,10 +71,16 @@ pub enum ContractError {
     TradeNotInsured = 28,
     InsuranceAlreadyClaimed = 29,
     InsuranceClaimNotEligible = 30,
-    NotMultiSigTrade = 31,
-    VotingExpired = 32,
-    NoConsensus = 34,
-    VotingNotExpired = 35,
-    ConsensusReached = 36,
-    InvalidMultiSigConfig = 37,
+    // Oracle errors (40–44)
+    OracleNotFound = 40,
+    OracleAlreadyRegistered = 41,
+    OracleListFull = 42,
+    OracleUnavailable = 43,
+    OraclePriceInvalid = 44,
+    // AMM errors (50–54)
+    AmmPoolNotFound = 50,
+    AmmSlippageExceeded = 51,
+    AmmInsufficientShares = 52,
+    AmmInvalidPair = 53,
+    AmmPoolAlreadyExists = 54,
 }

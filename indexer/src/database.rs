@@ -42,45 +42,44 @@ impl Database {
     }
 
     pub async fn get_events(&self, query: &EventQuery) -> Result<Vec<Event>, AppError> {
-        let mut sql = "SELECT id, event_type, contract_id, ledger, transaction_hash, timestamp, data, created_at FROM events WHERE 1=1".to_string();
-        let mut bindings = vec![];
-
-        if let Some(event_type) = &query.event_type {
-            sql.push_str(&format!(" AND event_type = ${}", bindings.len() + 1));
-            bindings.push(event_type.as_str());
+        let mut sql = String::from("SELECT id, event_type, contract_id, ledger, transaction_hash, timestamp, data, created_at FROM events WHERE 1=1");
+        
+        // Add conditions and collect owned String values
+        let mut params: Vec<String> = Vec::new();
+        
+        if let Some(ref event_type) = query.event_type {
+            sql.push_str(&format!(" AND event_type = ${}", params.len() + 1));
+            params.push(event_type.clone());
         }
-
+        
         if let Some(trade_id) = query.trade_id {
-            sql.push_str(&format!(" AND data->>'trade_id' = ${}", bindings.len() + 1));
-            bindings.push(&trade_id.to_string());
+            sql.push_str(&format!(" AND (data->>'trade_id')::BIGINT = ${}", params.len() + 1));
+            params.push(trade_id.to_string());
         }
-
+        
         if let Some(from_ledger) = query.from_ledger {
-            sql.push_str(&format!(" AND ledger >= ${}", bindings.len() + 1));
-            bindings.push(&from_ledger.to_string());
+            sql.push_str(&format!(" AND ledger >= ${}", params.len() + 1));
+            params.push(from_ledger.to_string());
         }
-
+        
         if let Some(to_ledger) = query.to_ledger {
-            sql.push_str(&format!(" AND ledger <= ${}", bindings.len() + 1));
-            bindings.push(&to_ledger.to_string());
+            sql.push_str(&format!(" AND ledger <= ${}", params.len() + 1));
+            params.push(to_ledger.to_string());
         }
-
-        sql.push_str(" ORDER BY ledger DESC, timestamp DESC");
-
+        
         if let Some(limit) = query.limit {
             sql.push_str(&format!(" LIMIT {}", limit));
         }
-
+        
         if let Some(offset) = query.offset {
             sql.push_str(&format!(" OFFSET {}", offset));
         }
-
-        let mut query_builder = sqlx::query(&sql);
-
-        for binding in bindings {
-            query_builder = query_builder.bind(binding);
+        
+        let mut query_builder = sqlx::query_as::<_, Event>(&sql);
+        for param in params {
+            query_builder = query_builder.bind(param);
         }
-
+        
         let rows = query_builder.fetch_all(&self.pool).await?;
 
         let events = rows
@@ -195,7 +194,6 @@ impl Database {
 
         Ok(events)
     }
-}
 
     /// Total number of indexed events, optionally filtered by contract.
     pub async fn get_event_count(&self, contract_id: Option<&str>) -> Result<i64, AppError> {
@@ -234,7 +232,6 @@ impl Database {
 
         Ok(row.map(|r| (r.get::<i64, _>("ledger"), r.get::<DateTime<Utc>, _>("timestamp"))))
     }
-}
 
     pub async fn record_search(&self, query_text: &str, search_type: &str) -> Result<(), AppError> {
         sqlx::query(
@@ -247,7 +244,70 @@ impl Database {
         .bind(search_type)
         .execute(&self.pool)
         .await?;
+
+        // Upsert daily analytics bucket
+        sqlx::query(
+            r#"
+            INSERT INTO search_analytics (date, search_type, query_count, unique_terms, updated_at)
+            VALUES (CURRENT_DATE, $1, 1, 1, NOW())
+            ON CONFLICT (date, search_type) DO UPDATE
+                SET query_count  = search_analytics.query_count + 1,
+                    unique_terms = (
+                        SELECT COUNT(DISTINCT query_text)
+                        FROM search_history
+                        WHERE search_type = $1
+                          AND created_at::DATE = CURRENT_DATE
+                    ),
+                    updated_at = NOW()
+            "#,
+        )
+        .bind(search_type)
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
+    }
+
+    pub async fn get_search_analytics(
+        &self,
+        query: &crate::models::SearchAnalyticsQuery,
+    ) -> Result<crate::models::SearchAnalyticsResponse, AppError> {
+        use crate::models::{SearchAnalyticsResponse, SearchAnalyticsRow};
+
+        let mut conditions = vec!["1=1".to_string()];
+        let mut idx = 1usize;
+
+        if query.from.is_some() {
+            conditions.push(format!("date >= ${}", idx));
+            idx += 1;
+        }
+        if query.to.is_some() {
+            conditions.push(format!("date <= ${}", idx));
+            idx += 1;
+        }
+        if query.search_type.is_some() {
+            conditions.push(format!("search_type = ${}", idx));
+            idx += 1;
+        }
+        let _ = idx;
+
+        let sql = format!(
+            "SELECT date, search_type, query_count, unique_terms \
+             FROM search_analytics WHERE {} ORDER BY date DESC, search_type",
+            conditions.join(" AND ")
+        );
+
+        let mut qb = sqlx::query_as::<_, SearchAnalyticsRow>(&sql);
+        if let Some(v) = query.from   { qb = qb.bind(v); }
+        if let Some(v) = query.to     { qb = qb.bind(v); }
+        if let Some(ref v) = query.search_type { qb = qb.bind(v); }
+
+        let rows = qb.fetch_all(&self.pool).await?;
+        let total_queries: i64 = rows.iter().map(|r| r.query_count).sum();
+
+        let top_terms = self.get_search_suggestions("", 10).await?;
+
+        Ok(SearchAnalyticsResponse { rows, top_terms, total_queries })
     }
 
     pub async fn search_trades(&self, query: &TradeSearchQuery) -> Result<Vec<TradeSearchResult>, AppError> {
@@ -558,6 +618,30 @@ impl Database {
 
         let top_actors = sqlx::query_as::<_, AuditBucket>(
             "SELECT actor AS label, COUNT(*)::BIGINT AS count FROM audit_logs GROUP BY actor ORDER BY count DESC LIMIT 20",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let top_actions = sqlx::query_as::<_, AuditBucket>(
+            "SELECT action AS label, COUNT(*)::BIGINT AS count FROM audit_logs GROUP BY action ORDER BY count DESC LIMIT 20",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(AuditStats { total, by_category, by_outcome, by_severity, top_actors, top_actions })
+    }
+
+    /// Delete audit logs older than `days` days. Returns the number of rows deleted.
+    pub async fn purge_old_audit_logs(&self, days: i64) -> Result<u64, AppError> {
+        let result = sqlx::query(
+            "DELETE FROM audit_logs WHERE created_at < NOW() - ($1 || ' days')::INTERVAL",
+        )
+        .bind(days)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     pub async fn insert_fraud_alert(&self, report: &FraudReport) -> Result<(), AppError> {
         let rules_json = serde_json::to_value(&report.rules_triggered).unwrap_or(serde_json::Value::Null);
         let status = if report.risk_score >= 80 { "pending" } else { "approved" };
@@ -607,26 +691,6 @@ impl Database {
         .fetch_all(&self.pool)
         .await?;
 
-        let top_actions = sqlx::query_as::<_, AuditBucket>(
-            "SELECT action AS label, COUNT(*)::BIGINT AS count FROM audit_logs GROUP BY action ORDER BY count DESC LIMIT 20",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(AuditStats { total, by_category, by_outcome, by_severity, top_actors, top_actions })
-    }
-
-    /// Delete audit logs older than `days` days. Returns the number of rows deleted.
-    pub async fn purge_old_audit_logs(&self, days: i64) -> Result<u64, AppError> {
-        let result = sqlx::query(
-            "DELETE FROM audit_logs WHERE created_at < NOW() - ($1 || ' days')::INTERVAL",
-        )
-        .bind(days)
-        .execute(&self.pool)
-        .await?;
-        Ok(result.rows_affected())
-    }
-}
         let mut alerts = Vec::new();
         for row in rows {
             alerts.push(serde_json::json!({
@@ -672,5 +736,144 @@ impl Database {
         .await?;
 
         Ok(())
+    }
+
+    // =========================================================================
+    // Notification Operations
+    // =========================================================================
+
+    pub async fn get_notification_preferences(
+        &self,
+        address: &str,
+    ) -> Result<Option<crate::models::NotificationPreferences>, AppError> {
+        let row = sqlx::query_as::<_, crate::models::NotificationPreferences>(
+            "SELECT * FROM notification_preferences WHERE address = $1",
+        )
+        .bind(address)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn upsert_notification_preferences(
+        &self,
+        address: &str,
+        upd: &crate::models::UpdateNotificationPreferences,
+    ) -> Result<crate::models::NotificationPreferences, AppError> {
+        // Fetch existing or use defaults, then apply partial update
+        let existing = self.get_notification_preferences(address).await?;
+        let base = existing.unwrap_or_else(|| crate::models::NotificationPreferences {
+            address: address.to_string(),
+            email_enabled: false,
+            email_address: None,
+            sms_enabled: false,
+            phone_number: None,
+            push_enabled: false,
+            push_token: None,
+            on_trade_created: true,
+            on_trade_funded: true,
+            on_trade_completed: true,
+            on_trade_confirmed: true,
+            on_dispute_raised: true,
+            on_dispute_resolved: true,
+            on_trade_cancelled: true,
+            updated_at: chrono::Utc::now(),
+        });
+
+        let row = sqlx::query_as::<_, crate::models::NotificationPreferences>(
+            r#"
+            INSERT INTO notification_preferences
+                (address, email_enabled, email_address, sms_enabled, phone_number,
+                 push_enabled, push_token,
+                 on_trade_created, on_trade_funded, on_trade_completed, on_trade_confirmed,
+                 on_dispute_raised, on_dispute_resolved, on_trade_cancelled, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+            ON CONFLICT (address) DO UPDATE SET
+                email_enabled   = EXCLUDED.email_enabled,
+                email_address   = EXCLUDED.email_address,
+                sms_enabled     = EXCLUDED.sms_enabled,
+                phone_number    = EXCLUDED.phone_number,
+                push_enabled    = EXCLUDED.push_enabled,
+                push_token      = EXCLUDED.push_token,
+                on_trade_created    = EXCLUDED.on_trade_created,
+                on_trade_funded     = EXCLUDED.on_trade_funded,
+                on_trade_completed  = EXCLUDED.on_trade_completed,
+                on_trade_confirmed  = EXCLUDED.on_trade_confirmed,
+                on_dispute_raised   = EXCLUDED.on_dispute_raised,
+                on_dispute_resolved = EXCLUDED.on_dispute_resolved,
+                on_trade_cancelled  = EXCLUDED.on_trade_cancelled,
+                updated_at = NOW()
+            RETURNING *
+            "#,
+        )
+        .bind(address)
+        .bind(upd.email_enabled.unwrap_or(base.email_enabled))
+        .bind(upd.email_address.as_ref().or(base.email_address.as_ref()))
+        .bind(upd.sms_enabled.unwrap_or(base.sms_enabled))
+        .bind(upd.phone_number.as_ref().or(base.phone_number.as_ref()))
+        .bind(upd.push_enabled.unwrap_or(base.push_enabled))
+        .bind(upd.push_token.as_ref().or(base.push_token.as_ref()))
+        .bind(upd.on_trade_created.unwrap_or(base.on_trade_created))
+        .bind(upd.on_trade_funded.unwrap_or(base.on_trade_funded))
+        .bind(upd.on_trade_completed.unwrap_or(base.on_trade_completed))
+        .bind(upd.on_trade_confirmed.unwrap_or(base.on_trade_confirmed))
+        .bind(upd.on_dispute_raised.unwrap_or(base.on_dispute_raised))
+        .bind(upd.on_dispute_resolved.unwrap_or(base.on_dispute_resolved))
+        .bind(upd.on_trade_cancelled.unwrap_or(base.on_trade_cancelled))
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn log_notification(
+        &self,
+        address: &str,
+        channel: &str,
+        template_id: &str,
+        subject: Option<&str>,
+        body: &str,
+        result: Result<(), String>,
+    ) {
+        let (status, error) = match result {
+            Ok(()) => ("sent", None),
+            Err(e) => ("failed", Some(e)),
+        };
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO notification_log (address, channel, template_id, subject, body, status, error)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(address)
+        .bind(channel)
+        .bind(template_id)
+        .bind(subject)
+        .bind(body)
+        .bind(status)
+        .bind(error)
+        .execute(&self.pool)
+        .await;
+    }
+
+    pub async fn get_notification_log(
+        &self,
+        address: &str,
+        limit: i64,
+    ) -> Result<Vec<crate::models::NotificationLogEntry>, AppError> {
+        let rows = sqlx::query_as::<_, crate::models::NotificationLogEntry>(
+            r#"
+            SELECT id, address, channel, template_id, subject, body, status, error, created_at
+            FROM notification_log
+            WHERE address = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(address)
+        .bind(limit.clamp(1, 200))
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 }
